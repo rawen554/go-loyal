@@ -12,7 +12,7 @@ import (
 
 type Claims struct {
 	jwt.RegisteredClaims
-	UserID string
+	UserID uint64
 }
 
 const tokenExp = time.Hour * 3
@@ -22,7 +22,7 @@ const UserIDKey = "userID"
 var ErrTokenNotValid = errors.New("token is not valid")
 var ErrNoUserInToken = errors.New("no user data in token")
 
-func BuildJWTString(userID string, seed string) (string, error) {
+func BuildJWTString(userID uint64, seed string) (string, error) {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, Claims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(tokenExp)),
@@ -38,7 +38,7 @@ func BuildJWTString(userID string, seed string) (string, error) {
 	return tokenString, nil
 }
 
-func GetUserID(tokenString string, seed string) (string, error) {
+func GetUserID(tokenString string, seed string) (uint64, error) {
 	claims := &Claims{}
 	token, err := jwt.ParseWithClaims(tokenString, claims,
 		func(t *jwt.Token) (interface{}, error) {
@@ -46,14 +46,14 @@ func GetUserID(tokenString string, seed string) (string, error) {
 		})
 	if err != nil {
 		if !token.Valid {
-			return "", ErrTokenNotValid
+			return 0, ErrTokenNotValid
 		} else {
-			return "", errors.New("parsing error")
+			return 0, errors.New("parsing error")
 		}
 	}
 
-	if claims.UserID == "" {
-		return "", ErrNoUserInToken
+	if claims.UserID == 0 {
+		return 0, ErrNoUserInToken
 	}
 
 	return claims.UserID, nil
@@ -70,24 +70,9 @@ func AuthMiddleware(seed string) gin.HandlerFunc {
 
 		userID, err := GetUserID(cookie, seed)
 		if err != nil {
-			if errors.Is(err, ErrNoUserInToken) {
+			if errors.Is(err, ErrNoUserInToken) || errors.Is(err, ErrTokenNotValid) {
 				c.Writer.WriteHeader(http.StatusUnauthorized)
 				return
-			}
-			if errors.Is(err, ErrTokenNotValid) {
-				token, err := BuildJWTString(userID, seed)
-				if err != nil {
-					log.Printf("Error building JWT string: %v", err)
-					c.Writer.WriteHeader(http.StatusInternalServerError)
-					return
-				}
-				userID, err = GetUserID(token, seed)
-				if err != nil {
-					log.Printf("Revalidate error user id from renewed token: %v", err)
-					c.Writer.WriteHeader(http.StatusInternalServerError)
-					return
-				}
-				c.SetCookie(CookieName, token, 3600*24*30, "", "", false, true)
 			}
 		}
 

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
@@ -31,6 +32,9 @@ func NewPostgresStore(ctx context.Context, dsn string, logLevel logger.LogLevel)
 	if err := conn.AutoMigrate(&models.User{}); err != nil {
 		return nil, err
 	}
+	if err := conn.AutoMigrate(&models.Order{}); err != nil {
+		return nil, err
+	}
 
 	log.Println("successfully connected to the database")
 
@@ -50,6 +54,35 @@ func (db *DBStore) GetUser(login string) (*models.User, error) {
 	result := db.conn.Where("login = ?", login).First(&user)
 
 	return &user, result.Error
+}
+
+func (db *DBStore) PutOrder(number uint64, userID uint64) error {
+	var order models.Order
+	result := db.conn.Where(models.Order{Number: number}).Attrs(models.Order{UserID: userID, Status: models.NEW}).FirstOrCreate(&order)
+	if err := result.Error; err != nil {
+		return fmt.Errorf("error saving order: %w", err)
+	}
+
+	if order.UserID == userID && order.Number == number && result.RowsAffected == 0 {
+		return models.ErrOrderHasBeenProcessedByUser
+	}
+
+	return nil
+}
+
+func (db *DBStore) GetUserOrders(userID uint64) ([]models.Order, error) {
+	orders := make([]models.Order, 0)
+	result := db.conn.Order("uploaded_at desc").Where(&models.Order{UserID: userID}).Find(&orders)
+
+	if err := result.Error; err != nil {
+		return nil, fmt.Errorf("error getting all user orders: %w", err)
+	}
+
+	if len(orders) == 0 {
+		return nil, models.ErrUserHasNoOrders
+	}
+
+	return orders, nil
 }
 
 func (db *DBStore) Ping() error {

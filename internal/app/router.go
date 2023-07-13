@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	rootRoute    = "/"
+	emptyRoute   = ""
 	userAPIRoute = "/api/user"
 )
 
@@ -35,13 +35,13 @@ func (a *App) SetupRouter() *gin.Engine {
 		protectedUserAPI.GET("withdrawals", a.GetWithdrawals)
 		ordersAPI := protectedUserAPI.Group("orders")
 		{
-			ordersAPI.POST(rootRoute, a.PutOrder)
-			ordersAPI.GET(rootRoute, a.GetOrders)
+			ordersAPI.POST(emptyRoute, a.PutOrder)
+			ordersAPI.GET(emptyRoute, a.GetOrders)
 		}
 
 		balanceAPI := protectedUserAPI.Group("balance")
 		{
-			balanceAPI.GET(rootRoute, a.GetBalance)
+			balanceAPI.GET(emptyRoute, a.GetBalance)
 			balanceAPI.POST("withdraw", a.BalanceWithdraw)
 		}
 	}
