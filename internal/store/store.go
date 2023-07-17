@@ -19,6 +19,7 @@ type DBStore struct {
 
 var ErrDBInsertConflict = errors.New("conflict insert into table, returned stored value")
 var ErrURLDeleted = errors.New("url is deleted")
+var ErrLoginNotFound = errors.New("login not found")
 
 func NewPostgresStore(ctx context.Context, dsn string, logLevel logger.LogLevel) (*DBStore, error) {
 	conn, err := gorm.Open(postgres.New(postgres.Config{
@@ -35,6 +36,9 @@ func NewPostgresStore(ctx context.Context, dsn string, logLevel logger.LogLevel)
 	if err := conn.AutoMigrate(&models.Order{}); err != nil {
 		return nil, err
 	}
+	if err := conn.AutoMigrate(&models.Withdraw{}); err != nil {
+		return nil, err
+	}
 
 	log.Println("successfully connected to the database")
 
@@ -49,14 +53,26 @@ func (db *DBStore) CreateUser(user *models.User) (int64, error) {
 	return result.RowsAffected, nil
 }
 
-func (db *DBStore) GetUser(login string) (*models.User, error) {
+func (db *DBStore) GetUser(u *models.User) (*models.User, error) {
 	var user models.User
-	result := db.conn.Where("login = ?", login).First(&user)
+	result := db.conn.Where(u).First(&user)
+
+	if result.RowsAffected == 0 {
+		return nil, ErrLoginNotFound
+	}
 
 	return &user, result.Error
 }
 
-func (db *DBStore) PutOrder(number uint64, userID uint64) error {
+func (db *DBStore) GetUserBalance(userID uint64) (*models.UserBalanceShema, error) {
+	var user models.User
+	var userBalance models.UserBalanceShema
+	result := db.conn.Model(&user).Where(&models.User{ID: userID}).Take(&userBalance)
+
+	return &userBalance, result.Error
+}
+
+func (db *DBStore) PutOrder(number string, userID uint64) error {
 	var order models.Order
 	result := db.conn.Where(models.Order{Number: number}).Attrs(models.Order{UserID: userID, Status: models.NEW}).FirstOrCreate(&order)
 	if err := result.Error; err != nil {

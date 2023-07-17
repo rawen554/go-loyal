@@ -23,11 +23,8 @@ func (a *App) SetupRouter() *gin.Engine {
 	r.Use(ginLoggerMiddleware)
 	r.Use(compress.Compress())
 
-	publicUserAPI := r.Group(userAPIRoute)
-	{
-		publicUserAPI.POST("register", a.Authz)
-		publicUserAPI.POST("login", a.Authz)
-	}
+	r.POST("/api/user/register", a.Authz)
+	r.POST("/api/user/login", a.Authz)
 
 	protectedUserAPI := r.Group(userAPIRoute)
 	protectedUserAPI.Use(auth.AuthMiddleware(a.Config.Seed))

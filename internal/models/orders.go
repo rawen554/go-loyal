@@ -29,8 +29,6 @@ func (s *Status) Scan(value interface{}) error {
 
 	*s = Status(sv)
 	return nil
-	// *s = Status(value.([]byte))
-	// return nil
 }
 
 func (s Status) Value() (driver.Value, error) {
@@ -45,7 +43,7 @@ func (ot OrderTime) MarshalJSON() ([]byte, error) {
 }
 
 type Order struct {
-	Number     uint64    `gorm:"primaryKey" json:"number"`
+	Number     string    `gorm:"primaryKey" json:"number"`
 	UploadedAt OrderTime `gorm:"default:now()" json:"uploaded_at"`
 	UserID     uint64    `json:"-"`
 	Accrual    uint64    `json:"accrual,omitempty"`
@@ -56,4 +54,9 @@ type Order struct {
 func (o *Order) BeforeCreate(tx *gorm.DB) (err error) {
 	o.Status = NEW
 	return nil
+}
+
+type BalanceWithdrawShema struct {
+	Order string `json:"order"`
+	Sum   uint64 `json:"sum"`
 }

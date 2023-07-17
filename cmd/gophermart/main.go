@@ -50,9 +50,14 @@ func main() {
 		storage.Close()
 	}()
 
+	accrual, err := app.NewAccrualClient(config.AccrualAddr)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	componentsErrs := make(chan error, 1)
 
-	app := app.NewApp(config, storage)
+	app := app.NewApp(config, storage, accrual)
 	r := app.SetupRouter()
 
 	srv := http.Server{

@@ -64,7 +64,8 @@ func AuthMiddleware(seed string) gin.HandlerFunc {
 		cookie, err := c.Cookie(CookieName)
 		if err != nil {
 			log.Printf("Error reading cookie[%v]: %v", CookieName, err)
-			c.Writer.WriteHeader(http.StatusInternalServerError)
+			c.Writer.WriteHeader(http.StatusUnauthorized)
+			c.Abort()
 			return
 		}
 
@@ -72,6 +73,11 @@ func AuthMiddleware(seed string) gin.HandlerFunc {
 		if err != nil {
 			if errors.Is(err, ErrNoUserInToken) || errors.Is(err, ErrTokenNotValid) {
 				c.Writer.WriteHeader(http.StatusUnauthorized)
+				c.Abort()
+				return
+			} else {
+				c.Writer.WriteHeader(http.StatusInternalServerError)
+				c.Abort()
 				return
 			}
 		}

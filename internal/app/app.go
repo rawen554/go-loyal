@@ -6,7 +6,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -14,27 +13,31 @@ import (
 	"github.com/rawen554/go-loyal/internal/config"
 	"github.com/rawen554/go-loyal/internal/middleware/auth"
 	"github.com/rawen554/go-loyal/internal/models"
+	"github.com/rawen554/go-loyal/internal/store"
 	"github.com/rawen554/go-loyal/internal/utils"
 	"golang.org/x/crypto/bcrypt"
 )
 
 type Store interface {
 	CreateUser(user *models.User) (int64, error)
-	GetUser(login string) (*models.User, error)
-	PutOrder(number uint64, userID uint64) error
+	GetUser(u *models.User) (*models.User, error)
+	PutOrder(number string, userID uint64) error
 	GetUserOrders(userID uint64) ([]models.Order, error)
+	GetUserBalance(userID uint64) (*models.UserBalanceShema, error)
 	Ping() error
 }
 
 type App struct {
-	Config *config.ServerConfig
-	store  Store
+	Config  *config.ServerConfig
+	store   Store
+	accrual *AccrualClient
 }
 
-func NewApp(config *config.ServerConfig, store Store) *App {
+func NewApp(config *config.ServerConfig, store Store, accrual *AccrualClient) *App {
 	return &App{
-		Config: config,
-		store:  store,
+		Config:  config,
+		store:   store,
+		accrual: accrual,
 	}
 }
 
@@ -50,20 +53,20 @@ func (a *App) Authz(c *gin.Context) {
 		return
 	}
 
-	user := models.User{
+	userReq := models.User{
 		Login:    userCreds.Login,
 		Password: userCreds.Password,
 	}
 	if isRegister {
-		hash, err := bcrypt.GenerateFromPassword([]byte(user.Password), 7)
+		hash, err := bcrypt.GenerateFromPassword([]byte(userReq.Password), 7)
 		if err != nil {
 			log.Printf("cannot hash pass: %v", err)
 			res.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		user.Password = string(hash)
+		userReq.Password = string(hash)
 
-		rowsAffected, err := a.store.CreateUser(&user)
+		rowsAffected, err := a.store.CreateUser(&userReq)
 		if err != nil || rowsAffected == 0 {
 			log.Printf("cannot operate user creds: %v", err)
 			res.WriteHeader(http.StatusInternalServerError)
@@ -71,21 +74,27 @@ func (a *App) Authz(c *gin.Context) {
 		}
 
 	} else {
-		u, err := a.store.GetUser(user.Login)
+		u, err := a.store.GetUser(&models.User{Login: userReq.Login})
 		if err != nil {
-			log.Printf("cannot operate user creds: %v", err)
-			res.WriteHeader(http.StatusInternalServerError)
-			return
+			if errors.Is(err, store.ErrLoginNotFound) {
+				log.Printf("login not found: %v", err)
+				res.WriteHeader(http.StatusUnauthorized)
+				return
+			} else {
+				log.Printf("cannot operate user creds: %v", err)
+				res.WriteHeader(http.StatusInternalServerError)
+				return
+			}
 		}
 
-		if err := bcrypt.CompareHashAndPassword([]byte(u.Password), []byte(user.Password)); err != nil {
+		if err := bcrypt.CompareHashAndPassword([]byte(u.Password), []byte(userReq.Password)); err != nil {
 			res.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		user.ID = u.ID
+		userReq.ID = u.ID
 	}
 
-	jwt, err := auth.BuildJWTString(user.ID, a.Config.Seed)
+	jwt, err := auth.BuildJWTString(userReq.ID, a.Config.Seed)
 	if err != nil {
 		log.Printf("cannot build jwt string: %v", err)
 		res.WriteHeader(http.StatusInternalServerError)
@@ -105,21 +114,20 @@ func (a *App) PutOrder(c *gin.Context) {
 		res.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	defer req.Body.Close()
+	defer func() {
+		if err := req.Body.Close(); err != nil {
+			res.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+	}()
 	preparedBody := string(body)
-
-	number, err := strconv.ParseUint(preparedBody, 10, 64)
-	if err != nil {
-		res.WriteHeader(http.StatusBadRequest)
-		return
-	}
 
 	if isValidLuhn := utils.IsValidLuhn(preparedBody); !isValidLuhn {
 		res.WriteHeader(http.StatusUnprocessableEntity)
 		return
 	}
 
-	if err := a.store.PutOrder(number, userID); err != nil {
+	if err := a.store.PutOrder(preparedBody, userID); err != nil {
 		if errors.Is(err, models.ErrOrderHasBeenProcessedByUser) {
 			res.WriteHeader(http.StatusOK)
 			return
@@ -163,11 +171,54 @@ func (a *App) GetWithdrawals(c *gin.Context) {
 }
 
 func (a *App) GetBalance(c *gin.Context) {
-	c.Writer.WriteHeader(http.StatusNotImplemented)
+	userID := c.GetUint64(auth.UserIDKey)
+	res := c.Writer
+
+	balance, err := a.store.GetUserBalance(userID)
+	if err != nil {
+		log.Printf("Error getting user balance: %v", err)
+		res.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	res.WriteHeader(http.StatusOK)
+	res.Header().Add("Content-Type", "application/json")
+	if err := json.NewEncoder(res).Encode(balance); err != nil {
+		log.Printf("Error writing response in JSON: %v", err)
+		res.WriteHeader(http.StatusInternalServerError)
+		return
+	}
 }
 
 func (a *App) BalanceWithdraw(c *gin.Context) {
-	c.Writer.WriteHeader(http.StatusNotImplemented)
+	userID := c.GetUint64(auth.UserIDKey)
+	res := c.Writer
+	req := c.Request
+
+	var withdrawRequest models.BalanceWithdrawShema
+	if err := json.NewDecoder(req.Body).Decode(&withdrawRequest); err != nil {
+		log.Printf("Body cannot be decoded: %v", err)
+		res.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	u, err := a.store.GetUser(&models.User{ID: userID})
+	if err != nil {
+		log.Printf("error getting user by ID: %v", err)
+		res.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	if u.Balance < float64(withdrawRequest.Sum) {
+		res.WriteHeader(http.StatusPaymentRequired)
+		return
+	}
+
+	if isValidLuhn := utils.IsValidLuhn(withdrawRequest.Order); !isValidLuhn {
+		res.WriteHeader(http.StatusUnprocessableEntity)
+		return
+	}
+
 }
 
 func (a *App) Ping(c *gin.Context) {
