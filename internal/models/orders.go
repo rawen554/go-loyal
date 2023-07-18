@@ -10,6 +10,7 @@ import (
 )
 
 var ErrOrderHasBeenProcessedByUser = errors.New("this order already been processed by user")
+var ErrOrderHasBeenProcessedByAnotherUser = errors.New("this order already been processed by another user")
 var ErrUserHasNoOrders = errors.New("this user has no orders")
 
 type Status string

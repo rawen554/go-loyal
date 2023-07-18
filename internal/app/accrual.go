@@ -5,7 +5,7 @@ import (
 	"github.com/rawen554/go-loyal/internal/models"
 )
 
-const OrdersApi = "/api/orders/{number}"
+const OrdersAPI = "/api/orders/{number}"
 
 type AccrualClient struct {
 	client *resty.Client
@@ -25,7 +25,7 @@ func NewAccrualClient(accrualAddr string) (*AccrualClient, error) {
 
 func (a *AccrualClient) GetOrderInfo(num string) (*AccrualOrderInfoShema, error) {
 	var orderInfo AccrualOrderInfoShema
-	_, err := a.client.R().SetResult(&orderInfo).SetPathParam("number", num).Get(OrdersApi)
+	_, err := a.client.R().SetResult(&orderInfo).SetPathParam("number", num).Get(OrdersAPI)
 	if err != nil {
 		return nil, err
 	}

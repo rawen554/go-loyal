@@ -66,11 +66,16 @@ func (a *App) Authz(c *gin.Context) {
 		}
 		userReq.Password = string(hash)
 
-		rowsAffected, err := a.store.CreateUser(&userReq)
-		if err != nil || rowsAffected == 0 {
-			log.Printf("cannot operate user creds: %v", err)
-			res.WriteHeader(http.StatusInternalServerError)
-			return
+		if _, err = a.store.CreateUser(&userReq); err != nil {
+			if errors.Is(err, store.ErrDuplicateLogin) {
+				log.Printf("login already taken: %v", err)
+				res.WriteHeader(http.StatusConflict)
+				return
+			} else {
+				log.Printf("cannot operate user creds: %v", err)
+				res.WriteHeader(http.StatusInternalServerError)
+				return
+			}
 		}
 
 	} else {
@@ -128,7 +133,10 @@ func (a *App) PutOrder(c *gin.Context) {
 	}
 
 	if err := a.store.PutOrder(preparedBody, userID); err != nil {
-		if errors.Is(err, models.ErrOrderHasBeenProcessedByUser) {
+		if errors.Is(err, models.ErrOrderHasBeenProcessedByAnotherUser) {
+			res.WriteHeader(http.StatusConflict)
+			return
+		} else if errors.Is(err, models.ErrOrderHasBeenProcessedByUser) {
 			res.WriteHeader(http.StatusOK)
 			return
 		} else {
@@ -138,7 +146,6 @@ func (a *App) PutOrder(c *gin.Context) {
 	}
 
 	res.WriteHeader(http.StatusAccepted)
-	return
 }
 
 func (a *App) GetOrders(c *gin.Context) {

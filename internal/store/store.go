@@ -7,6 +7,8 @@ import (
 	"log"
 
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
+	"github.com/jackc/pgerrcode"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/rawen554/go-loyal/internal/models"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -20,6 +22,7 @@ type DBStore struct {
 var ErrDBInsertConflict = errors.New("conflict insert into table, returned stored value")
 var ErrURLDeleted = errors.New("url is deleted")
 var ErrLoginNotFound = errors.New("login not found")
+var ErrDuplicateLogin = errors.New("login already registered")
 
 func NewPostgresStore(ctx context.Context, dsn string, logLevel logger.LogLevel) (*DBStore, error) {
 	conn, err := gorm.Open(postgres.New(postgres.Config{
@@ -47,7 +50,16 @@ func NewPostgresStore(ctx context.Context, dsn string, logLevel logger.LogLevel)
 
 func (db *DBStore) CreateUser(user *models.User) (int64, error) {
 	result := db.conn.Create(user)
+
 	if result.Error != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(result.Error, &pgErr) {
+			if pgErr.Code == pgerrcode.UniqueViolation {
+				return 0, ErrDuplicateLogin
+			}
+		}
+
+		log.Printf("error saving user to db: %v", result.Error)
 		return 0, result.Error
 	}
 	return result.RowsAffected, nil
@@ -77,6 +89,10 @@ func (db *DBStore) PutOrder(number string, userID uint64) error {
 	result := db.conn.Where(models.Order{Number: number}).Attrs(models.Order{UserID: userID, Status: models.NEW}).FirstOrCreate(&order)
 	if err := result.Error; err != nil {
 		return fmt.Errorf("error saving order: %w", err)
+	}
+
+	if order.UserID != userID {
+		return models.ErrOrderHasBeenProcessedByAnotherUser
 	}
 
 	if order.UserID == userID && order.Number == number && result.RowsAffected == 0 {
