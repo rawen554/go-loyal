@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"time"
 
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	"github.com/jackc/pgerrcode"
@@ -25,9 +26,7 @@ var ErrLoginNotFound = errors.New("login not found")
 var ErrDuplicateLogin = errors.New("login already registered")
 
 func NewPostgresStore(ctx context.Context, dsn string, logLevel logger.LogLevel) (*DBStore, error) {
-	conn, err := gorm.Open(postgres.New(postgres.Config{
-		DSN: dsn,
-	}), &gorm.Config{})
+	conn, err := ConnectLoop(dsn, 5*time.Second, time.Minute)
 	if err != nil {
 		return nil, err
 	}
@@ -46,6 +45,29 @@ func NewPostgresStore(ctx context.Context, dsn string, logLevel logger.LogLevel)
 	log.Println("successfully connected to the database")
 
 	return &DBStore{conn: conn}, nil
+}
+
+func ConnectLoop(dsn string, tick time.Duration, timeout time.Duration) (*gorm.DB, error) {
+	ticker := time.NewTicker(tick)
+	defer ticker.Stop()
+
+	timeoutExceeded := time.After(timeout)
+
+	for {
+		select {
+		case <-timeoutExceeded:
+			return nil, fmt.Errorf("db connection failed after %s timeout", time.Minute)
+		case <-ticker.C:
+			conn, err := gorm.Open(postgres.New(postgres.Config{
+				DSN: dsn,
+			}), &gorm.Config{})
+			if err != nil {
+				log.Printf("error connecting to db: %v", err)
+			} else {
+				return conn, err
+			}
+		}
+	}
 }
 
 func (db *DBStore) CreateUser(user *models.User) (int64, error) {
@@ -104,17 +126,37 @@ func (db *DBStore) PutOrder(number string, userID uint64) error {
 
 func (db *DBStore) GetUserOrders(userID uint64) ([]models.Order, error) {
 	orders := make([]models.Order, 0)
-	result := db.conn.Order("uploaded_at desc").Where(&models.Order{UserID: userID}).Find(&orders)
+	result := db.conn.Order("uploaded_at asc").Where(&models.Order{UserID: userID}).Find(&orders)
 
 	if err := result.Error; err != nil {
 		return nil, fmt.Errorf("error getting all user orders: %w", err)
 	}
 
 	if len(orders) == 0 {
-		return nil, models.ErrUserHasNoOrders
+		return nil, models.ErrUserHasNoItems
 	}
 
 	return orders, nil
+}
+
+func (db *DBStore) CreateWithdraw(userID uint64, w models.BalanceWithdrawShema) error {
+	result := db.conn.Create(&models.Withdraw{OrderNum: w.Order, Sum: w.Sum, UserID: userID})
+	return result.Error
+}
+
+func (db *DBStore) GetWithdrawals(userID uint64) ([]models.Withdraw, error) {
+	withdrawals := make([]models.Withdraw, 0)
+	result := db.conn.Order("processed_at asc").Where(&models.Withdraw{UserID: userID}).Find(&withdrawals)
+
+	if err := result.Error; err != nil {
+		return nil, fmt.Errorf("error getting all user withdrawals: %w", err)
+	}
+
+	if len(withdrawals) == 0 {
+		return nil, models.ErrUserHasNoItems
+	}
+
+	return withdrawals, nil
 }
 
 func (db *DBStore) Ping() error {

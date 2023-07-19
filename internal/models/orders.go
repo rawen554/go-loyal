@@ -11,7 +11,7 @@ import (
 
 var ErrOrderHasBeenProcessedByUser = errors.New("this order already been processed by user")
 var ErrOrderHasBeenProcessedByAnotherUser = errors.New("this order already been processed by another user")
-var ErrUserHasNoOrders = errors.New("this user has no orders")
+var ErrUserHasNoItems = errors.New("no items found")
 
 type Status string
 
@@ -57,7 +57,10 @@ func (o *Order) BeforeCreate(tx *gorm.DB) (err error) {
 	return nil
 }
 
-type BalanceWithdrawShema struct {
-	Order string `json:"order"`
-	Sum   uint64 `json:"sum"`
+func (o *Order) AfterUpdate(tx *gorm.DB) (err error) {
+	if o.Status == PROCESSED {
+		result := tx.Model(&User{}).Where("id = ?", o.UserID).Update("balance", gorm.Expr("balance + ?", o.Accrual))
+		return result.Error
+	}
+	return
 }

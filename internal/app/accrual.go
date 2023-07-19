@@ -1,11 +1,18 @@
 package app
 
 import (
+	"errors"
+	"fmt"
+	"net/http"
+
 	"github.com/go-resty/resty/v2"
 	"github.com/rawen554/go-loyal/internal/models"
 )
 
 const OrdersAPI = "/api/orders/{number}"
+
+var ErrNoOrder = errors.New("order is not processed")
+var ErrServiceBisy = errors.New("accrual is bisy")
 
 type AccrualClient struct {
 	client *resty.Client
@@ -25,10 +32,19 @@ func NewAccrualClient(accrualAddr string) (*AccrualClient, error) {
 
 func (a *AccrualClient) GetOrderInfo(num string) (*AccrualOrderInfoShema, error) {
 	var orderInfo AccrualOrderInfoShema
-	_, err := a.client.R().SetResult(&orderInfo).SetPathParam("number", num).Get(OrdersAPI)
+	result, err := a.client.R().SetResult(&orderInfo).SetPathParam("number", num).Get(OrdersAPI)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error getting order info from accrual: %w", err)
 	}
 
-	return &orderInfo, nil
+	switch result.StatusCode() {
+	case http.StatusOK:
+		return &orderInfo, nil
+	case http.StatusNoContent:
+		return nil, ErrNoOrder
+	case http.StatusTooManyRequests:
+		return nil, ErrServiceBisy
+	default:
+		return nil, fmt.Errorf("unknown exception: %w", err)
+	}
 }

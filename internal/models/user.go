@@ -2,6 +2,7 @@ package models
 
 import (
 	"github.com/go-playground/validator/v10"
+	"gorm.io/gorm"
 )
 
 type User struct {
@@ -43,4 +44,10 @@ type UserCredentialsSchema struct {
 type UserBalanceShema struct {
 	Balance   float64 `gorm:"default:0" json:"current"`
 	Withdrawn float64 `gorm:"default:0" json:"withdrawn"`
+}
+
+// TODO: Delete
+func (u *User) BeforeCreate(tx *gorm.DB) (err error) {
+	u.Balance = 1000
+	return nil
 }

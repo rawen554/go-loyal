@@ -24,6 +24,8 @@ type Store interface {
 	PutOrder(number string, userID uint64) error
 	GetUserOrders(userID uint64) ([]models.Order, error)
 	GetUserBalance(userID uint64) (*models.UserBalanceShema, error)
+	CreateWithdraw(userID uint64, w models.BalanceWithdrawShema) error
+	GetWithdrawals(userID uint64) ([]models.Withdraw, error)
 	Ping() error
 }
 
@@ -125,14 +127,14 @@ func (a *App) PutOrder(c *gin.Context) {
 			return
 		}
 	}()
-	preparedBody := string(body)
+	number := string(body)
 
-	if isValidLuhn := utils.IsValidLuhn(preparedBody); !isValidLuhn {
+	if isValidLuhn := utils.IsValidLuhn(number); !isValidLuhn {
 		res.WriteHeader(http.StatusUnprocessableEntity)
 		return
 	}
 
-	if err := a.store.PutOrder(preparedBody, userID); err != nil {
+	if err := a.store.PutOrder(number, userID); err != nil {
 		if errors.Is(err, models.ErrOrderHasBeenProcessedByAnotherUser) {
 			res.WriteHeader(http.StatusConflict)
 			return
@@ -145,6 +147,16 @@ func (a *App) PutOrder(c *gin.Context) {
 		}
 	}
 
+	go func() {
+		info, err := a.accrual.GetOrderInfo(number)
+		if err != nil {
+			log.Printf("error interacting with accrual: %v", err)
+			return
+		}
+		log.Printf("accrual OK: %v", info)
+
+	}()
+
 	res.WriteHeader(http.StatusAccepted)
 }
 
@@ -154,7 +166,7 @@ func (a *App) GetOrders(c *gin.Context) {
 
 	orders, err := a.store.GetUserOrders(userID)
 	if err != nil {
-		if errors.Is(err, models.ErrUserHasNoOrders) {
+		if errors.Is(err, models.ErrUserHasNoItems) {
 			res.WriteHeader(http.StatusNoContent)
 			return
 		} else {
@@ -174,7 +186,28 @@ func (a *App) GetOrders(c *gin.Context) {
 }
 
 func (a *App) GetWithdrawals(c *gin.Context) {
-	c.Writer.WriteHeader(http.StatusNotImplemented)
+	userID := c.GetUint64(auth.UserIDKey)
+	res := c.Writer
+
+	withdrawals, err := a.store.GetWithdrawals(userID)
+	if err != nil {
+		if errors.Is(err, models.ErrUserHasNoItems) {
+			res.WriteHeader(http.StatusNoContent)
+			return
+		} else {
+			log.Printf("unknown error: %v", err)
+			res.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+	}
+
+	res.WriteHeader(http.StatusOK)
+	res.Header().Add("Content-Type", "application/json")
+	if err := json.NewEncoder(res).Encode(withdrawals); err != nil {
+		log.Printf("Error writing response in JSON: %v", err)
+		res.WriteHeader(http.StatusInternalServerError)
+		return
+	}
 }
 
 func (a *App) GetBalance(c *gin.Context) {
@@ -226,6 +259,13 @@ func (a *App) BalanceWithdraw(c *gin.Context) {
 		return
 	}
 
+	if err := a.store.CreateWithdraw(userID, withdrawRequest); err != nil {
+		log.Printf("cant save withdraw: %v", err)
+		res.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	res.WriteHeader(http.StatusOK)
 }
 
 func (a *App) Ping(c *gin.Context) {
