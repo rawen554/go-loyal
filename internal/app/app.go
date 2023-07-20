@@ -137,13 +137,14 @@ func (a *App) PutOrder(c *gin.Context) {
 	}
 
 	go func() {
+		go a.store.UpdateOrder(&models.Order{Number: number, Status: models.PROCESSING})
 		info, err := a.accrual.GetOrderInfo(number)
 		if err != nil {
 			log.Printf("error interacting with accrual: %v", err)
 			return
 		}
-		log.Printf("accrual OK: %v", info)
 
+		go a.store.UpdateOrder(&models.Order{Number: info.Order, Accrual: info.Accrual, Status: info.Status})
 	}()
 
 	res.WriteHeader(http.StatusAccepted)

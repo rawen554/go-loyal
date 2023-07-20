@@ -17,6 +17,7 @@ type Status string
 
 const (
 	NEW        Status = "NEW"
+	REGISTERED Status = "REGISTERED"
 	PROCESSING Status = "PROCESSING"
 	INVALID    Status = "INVALID"
 	PROCESSED  Status = "PROCESSED"
@@ -47,7 +48,7 @@ type Order struct {
 	Number     string    `gorm:"primaryKey" json:"number"`
 	UploadedAt OrderTime `gorm:"default:now()" json:"uploaded_at"`
 	UserID     uint64    `json:"-"`
-	Accrual    uint64    `json:"accrual,omitempty"`
+	Accrual    float64   `json:"accrual,omitempty"`
 	User       User      `json:"-"`
 	Status     Status    `sql:"type:order_status" json:"status"`
 }

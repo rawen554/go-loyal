@@ -24,6 +24,7 @@ type Store interface {
 	CreateUser(user *models.User) (int64, error)
 	GetUser(u *models.User) (*models.User, error)
 	PutOrder(number string, userID uint64) error
+	UpdateOrder(o *models.Order) (int64, error)
 	GetUserOrders(userID uint64) ([]models.Order, error)
 	GetUserBalance(userID uint64) (*models.UserBalanceShema, error)
 	CreateWithdraw(userID uint64, w models.BalanceWithdrawShema) error
@@ -134,6 +135,11 @@ func (db *DBStore) PutOrder(number string, userID uint64) error {
 	}
 
 	return nil
+}
+
+func (db *DBStore) UpdateOrder(o *models.Order) (int64, error) {
+	result := db.conn.Save(o)
+	return result.RowsAffected, result.Error
 }
 
 func (db *DBStore) GetUserOrders(userID uint64) ([]models.Order, error) {
