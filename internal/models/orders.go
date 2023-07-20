@@ -58,7 +58,7 @@ func (o *Order) BeforeCreate(tx *gorm.DB) (err error) {
 }
 
 func (o *Order) AfterUpdate(tx *gorm.DB) (err error) {
-	if o.Status == PROCESSED {
+	if o.Status == PROCESSED && o.Accrual > 0 {
 		result := tx.Model(&User{}).Where("id = ?", o.UserID).Update("balance", gorm.Expr("balance + ?", o.Accrual))
 		return result.Error
 	}

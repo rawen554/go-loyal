@@ -20,12 +20,24 @@ type DBStore struct {
 	conn *gorm.DB
 }
 
+type Store interface {
+	CreateUser(user *models.User) (int64, error)
+	GetUser(u *models.User) (*models.User, error)
+	PutOrder(number string, userID uint64) error
+	GetUserOrders(userID uint64) ([]models.Order, error)
+	GetUserBalance(userID uint64) (*models.UserBalanceShema, error)
+	CreateWithdraw(userID uint64, w models.BalanceWithdrawShema) error
+	GetWithdrawals(userID uint64) ([]models.Withdraw, error)
+	Ping() error
+	Close()
+}
+
 var ErrDBInsertConflict = errors.New("conflict insert into table, returned stored value")
 var ErrURLDeleted = errors.New("url is deleted")
 var ErrLoginNotFound = errors.New("login not found")
 var ErrDuplicateLogin = errors.New("login already registered")
 
-func NewPostgresStore(ctx context.Context, dsn string, logLevel logger.LogLevel) (*DBStore, error) {
+func NewPostgresStore(ctx context.Context, dsn string, logLevel logger.LogLevel) (Store, error) {
 	conn, err := ConnectLoop(dsn, 5*time.Second, time.Minute)
 	if err != nil {
 		return nil, err

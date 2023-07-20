@@ -11,6 +11,10 @@ type Withdraw struct {
 	ProcessedAt OrderTime `gorm:"default:now()" json:"processed_at"`
 }
 
+func (w *Withdraw) TableName() string {
+	return "withdrawals"
+}
+
 type BalanceWithdrawShema struct {
 	Order string  `json:"order"`
 	Sum   float64 `json:"sum"`
@@ -18,6 +22,9 @@ type BalanceWithdrawShema struct {
 
 func (w *Withdraw) AfterCreate(tx *gorm.DB) (err error) {
 	result := tx.Model(&User{}).Where("id = ?", w.UserID).
-		Updates(map[string]interface{}{"balance": gorm.Expr("balance - ?", w.Sum), "withdrawn": gorm.Expr("withdrawn + ?", w.Sum)})
+		Updates(map[string]interface{}{
+			"balance":   gorm.Expr("balance - ?", w.Sum),
+			"withdrawn": gorm.Expr("withdrawn + ?", w.Sum),
+		})
 	return result.Error
 }

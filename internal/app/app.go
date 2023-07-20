@@ -18,24 +18,13 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-type Store interface {
-	CreateUser(user *models.User) (int64, error)
-	GetUser(u *models.User) (*models.User, error)
-	PutOrder(number string, userID uint64) error
-	GetUserOrders(userID uint64) ([]models.Order, error)
-	GetUserBalance(userID uint64) (*models.UserBalanceShema, error)
-	CreateWithdraw(userID uint64, w models.BalanceWithdrawShema) error
-	GetWithdrawals(userID uint64) ([]models.Withdraw, error)
-	Ping() error
-}
-
 type App struct {
 	Config  *config.ServerConfig
-	store   Store
-	accrual *AccrualClient
+	store   store.Store
+	accrual Accrual
 }
 
-func NewApp(config *config.ServerConfig, store Store, accrual *AccrualClient) *App {
+func NewApp(config *config.ServerConfig, store store.Store, accrual Accrual) *App {
 	return &App{
 		Config:  config,
 		store:   store,

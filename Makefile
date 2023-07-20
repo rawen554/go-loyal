@@ -12,6 +12,9 @@ build:
 .PHONY: clean-run
 clean-run: build run
 
+.PHONY: restart-pg
+restart-pg: stop-pg clean-data pg
+
 .PHONY: pg
 pg:
 	docker run --rm \
