@@ -4,8 +4,7 @@ import "gorm.io/gorm"
 
 type Withdraw struct {
 	OrderNum    string    `json:"order"`
-	Order       Order     `gorm:"foreignKey:OrderNum" json:"-"`
-	UserID      uint64    `json:"-"`
+	UserID      uint64    `gorm:"column:user_id" json:"-"`
 	User        User      `json:"-"`
 	Sum         float64   `json:"sum"`
 	ProcessedAt OrderTime `gorm:"default:now()" json:"processed_at"`

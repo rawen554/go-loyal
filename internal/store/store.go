@@ -138,7 +138,7 @@ func (db *DBStore) PutOrder(number string, userID uint64) error {
 }
 
 func (db *DBStore) UpdateOrder(o *models.Order) (int64, error) {
-	result := db.conn.Save(o)
+	result := db.conn.Model(o).Updates(&models.Order{Accrual: o.Accrual, Status: o.Status})
 	return result.RowsAffected, result.Error
 }
 

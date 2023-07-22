@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -131,20 +132,42 @@ func (a *App) PutOrder(c *gin.Context) {
 			res.WriteHeader(http.StatusOK)
 			return
 		} else {
+			log.Printf("unhandled error: %v", err)
 			res.WriteHeader(http.StatusInternalServerError)
 			return
 		}
 	}
 
 	go func() {
-		go a.store.UpdateOrder(&models.Order{Number: number, Status: models.PROCESSING})
-		info, err := a.accrual.GetOrderInfo(number)
-		if err != nil {
-			log.Printf("error interacting with accrual: %v", err)
-			return
-		}
+		go func() {
+			rows, err := a.store.UpdateOrder(&models.Order{Number: number, UserID: userID, Status: models.PROCESSING})
+			if rows == 0 || err != nil {
+				log.Printf("error updating order: %v", err)
+			}
+		}()
 
-		go a.store.UpdateOrder(&models.Order{Number: info.Order, Accrual: info.Accrual, Status: info.Status})
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+
+		for {
+			<-ticker.C
+			info, err := a.accrual.GetOrderInfo(number)
+			if err != nil {
+				log.Printf("error interacting with accrual: %v", err)
+				return
+			}
+
+			if info.Status == models.PROCESSED || info.Status == models.INVALID {
+				go func() {
+					rows, err := a.store.UpdateOrder(&models.Order{Number: info.Order, UserID: userID, Accrual: info.Accrual, Status: info.Status})
+					if rows == 0 || err != nil {
+						log.Printf("error updating order: %v", err)
+					}
+				}()
+
+				break
+			}
+		}
 	}()
 
 	res.WriteHeader(http.StatusAccepted)
