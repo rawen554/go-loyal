@@ -1,4 +1,4 @@
-package app
+package accrual
 
 import (
 	"errors"
@@ -50,6 +50,8 @@ type AccrualOrderInfoShema struct {
 	Accrual float64       `json:"accrual,omitempty"`
 }
 
+// retryable (hashicorp) 5xx
+
 func NewAccrualClient(accrualAddr string) (Accrual, error) {
 	return &AccrualClient{
 		client: resty.New().SetBaseURL(accrualAddr),
@@ -84,6 +86,7 @@ func (a *AccrualClient) GetOrderInfo(num string) (*AccrualOrderInfoShema, error)
 		preparedRPM, err := strconv.Atoi(string(rpm))
 		if err != nil {
 			log.Printf("cant convert MaxRPM to int: %v", err)
+			return nil, err
 		}
 
 		return nil, NewServiceBisyError(time.Duration(cooldown)*time.Second, preparedRPM, err)

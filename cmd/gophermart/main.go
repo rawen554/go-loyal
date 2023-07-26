@@ -11,9 +11,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rawen554/go-loyal/internal/adapters/accrual"
+	"github.com/rawen554/go-loyal/internal/adapters/store"
 	"github.com/rawen554/go-loyal/internal/app"
 	"github.com/rawen554/go-loyal/internal/config"
-	"github.com/rawen554/go-loyal/internal/store"
+	"github.com/rawen554/go-loyal/internal/models"
+	"github.com/rawen554/go-loyal/internal/processing"
 	"gorm.io/gorm/logger"
 )
 
@@ -28,12 +31,12 @@ func main() {
 
 	config, err := config.ParseFlags()
 	if err != nil {
-		log.Fatal(err)
+		log.Panic(err)
 	}
 
 	storage, err := store.NewPostgresStore(ctx, config.DatabaseURI, logger.LogLevel(config.LogLevel))
 	if err != nil {
-		log.Fatal(err)
+		log.Panic(err)
 	}
 
 	wg := &sync.WaitGroup{}
@@ -50,14 +53,9 @@ func main() {
 		storage.Close()
 	}()
 
-	accrual, err := app.NewAccrualClient(config.AccrualAddr)
-	if err != nil {
-		log.Fatal(err)
-	}
-
 	componentsErrs := make(chan error, 1)
 
-	app := app.NewApp(config, storage, accrual)
+	app := app.NewApp(config, storage)
 	r := app.SetupRouter()
 
 	srv := http.Server{
@@ -73,6 +71,18 @@ func main() {
 			errs <- fmt.Errorf("run server has failed: %w", err)
 		}
 	}(componentsErrs)
+
+	accrual, err := accrual.NewAccrualClient(config.AccrualAddr)
+	if err != nil {
+		log.Panic(err)
+	}
+
+	ordersChan := make(chan *models.Order, 10)
+	processingInstance := processing.NewProcessingController(ordersChan, storage, accrual)
+
+	go func(ctx context.Context, errs chan<- error) {
+		processingInstance.Process(ctx)
+	}(ctx, componentsErrs)
 
 	wg.Add(1)
 	go func() {

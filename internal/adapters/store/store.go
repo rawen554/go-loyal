@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log"
@@ -26,6 +27,7 @@ type Store interface {
 	PutOrder(number string, userID uint64) error
 	UpdateOrder(o *models.Order) (int64, error)
 	GetUserOrders(userID uint64) ([]models.Order, error)
+	GetUnprocessedOrders() ([]models.Order, error)
 	GetUserBalance(userID uint64) (*models.UserBalanceShema, error)
 	CreateWithdraw(userID uint64, w models.BalanceWithdrawShema) error
 	GetWithdrawals(userID uint64) ([]models.Withdraw, error)
@@ -38,8 +40,10 @@ var ErrURLDeleted = errors.New("url is deleted")
 var ErrLoginNotFound = errors.New("login not found")
 var ErrDuplicateLogin = errors.New("login already registered")
 
+const connectTick = 5
+
 func NewPostgresStore(ctx context.Context, dsn string, logLevel logger.LogLevel) (Store, error) {
-	conn, err := ConnectLoop(dsn, 5*time.Second, time.Minute)
+	conn, err := ConnectLoop(dsn, connectTick*time.Second, time.Minute)
 	if err != nil {
 		return nil, err
 	}
@@ -140,6 +144,20 @@ func (db *DBStore) PutOrder(number string, userID uint64) error {
 func (db *DBStore) UpdateOrder(o *models.Order) (int64, error) {
 	result := db.conn.Model(o).Updates(&models.Order{Accrual: o.Accrual, Status: o.Status})
 	return result.RowsAffected, result.Error
+}
+
+func (db *DBStore) GetUnprocessedOrders() ([]models.Order, error) {
+	orders := make([]models.Order, 0)
+	result := db.conn.Where(
+		"status = @new OR status = @processing",
+		sql.Named("new", models.NEW), sql.Named("processing", models.PROCESSING),
+	).Find(&orders)
+
+	if err := result.Error; err != nil {
+		return nil, fmt.Errorf("error getting all unprocessed orders: %w", err)
+	}
+
+	return orders, nil
 }
 
 func (db *DBStore) GetUserOrders(userID uint64) ([]models.Order, error) {

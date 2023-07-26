@@ -7,7 +7,7 @@ run:
 
 .PHONY: build
 build:
-	go build -o ./cmd/gophermart/gophermart
+	go build -o ./cmd/gophermart/gophermart ./cmd/gophermart
 
 .PHONY: clean-run
 clean-run: build run

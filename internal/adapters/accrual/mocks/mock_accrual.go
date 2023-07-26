@@ -8,7 +8,7 @@ import (
 	reflect "reflect"
 
 	gomock "github.com/golang/mock/gomock"
-	app "github.com/rawen554/go-loyal/internal/app"
+	"github.com/rawen554/go-loyal/internal/adapters/accrual"
 )
 
 // MockAccrual is a mock of Accrual interface.
@@ -35,10 +35,10 @@ func (m *MockAccrual) EXPECT() *MockAccrualMockRecorder {
 }
 
 // GetOrderInfo mocks base method.
-func (m *MockAccrual) GetOrderInfo(num string) (*app.AccrualOrderInfoShema, error) {
+func (m *MockAccrual) GetOrderInfo(num string) (*accrual.AccrualOrderInfoShema, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetOrderInfo", num)
-	ret0, _ := ret[0].(*app.AccrualOrderInfoShema)
+	ret0, _ := ret[0].(*accrual.AccrualOrderInfoShema)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }

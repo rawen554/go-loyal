@@ -7,29 +7,26 @@ import (
 	"log"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/rawen554/go-loyal/internal/adapters/store"
 	"github.com/rawen554/go-loyal/internal/config"
 	"github.com/rawen554/go-loyal/internal/middleware/auth"
 	"github.com/rawen554/go-loyal/internal/models"
-	"github.com/rawen554/go-loyal/internal/store"
 	"github.com/rawen554/go-loyal/internal/utils"
 	"golang.org/x/crypto/bcrypt"
 )
 
 type App struct {
-	Config  *config.ServerConfig
-	store   store.Store
-	accrual Accrual
+	Config *config.ServerConfig
+	store  store.Store
 }
 
-func NewApp(config *config.ServerConfig, store store.Store, accrual Accrual) *App {
+func NewApp(config *config.ServerConfig, store store.Store) *App {
 	return &App{
-		Config:  config,
-		store:   store,
-		accrual: accrual,
+		Config: config,
+		store:  store,
 	}
 }
 
@@ -50,7 +47,7 @@ func (a *App) Authz(c *gin.Context) {
 		Password: userCreds.Password,
 	}
 	if isRegister {
-		hash, err := bcrypt.GenerateFromPassword([]byte(userReq.Password), 7)
+		hash, err := bcrypt.GenerateFromPassword([]byte(userReq.Password), 7) //TODO: check sha512, cryptoready
 		if err != nil {
 			log.Printf("cannot hash pass: %v", err)
 			res.WriteHeader(http.StatusInternalServerError)
@@ -138,37 +135,7 @@ func (a *App) PutOrder(c *gin.Context) {
 		}
 	}
 
-	go func() {
-		go func() {
-			rows, err := a.store.UpdateOrder(&models.Order{Number: number, UserID: userID, Status: models.PROCESSING})
-			if rows == 0 || err != nil {
-				log.Printf("error updating order: %v", err)
-			}
-		}()
-
-		ticker := time.NewTicker(time.Second)
-		defer ticker.Stop()
-
-		for {
-			<-ticker.C
-			info, err := a.accrual.GetOrderInfo(number)
-			if err != nil {
-				log.Printf("error interacting with accrual: %v", err)
-				return
-			}
-
-			if info.Status == models.PROCESSED || info.Status == models.INVALID {
-				go func() {
-					rows, err := a.store.UpdateOrder(&models.Order{Number: info.Order, UserID: userID, Accrual: info.Accrual, Status: info.Status})
-					if rows == 0 || err != nil {
-						log.Printf("error updating order: %v", err)
-					}
-				}()
-
-				break
-			}
-		}
-	}()
+	// TODO: errgroup - сбор ошибок с воркеров
 
 	res.WriteHeader(http.StatusAccepted)
 }
