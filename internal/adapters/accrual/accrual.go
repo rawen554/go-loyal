@@ -3,7 +3,6 @@ package accrual
 import (
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -11,12 +10,15 @@ import (
 
 	"github.com/go-resty/resty/v2"
 	"github.com/rawen554/go-loyal/internal/models"
+	"go.uber.org/zap"
 )
 
 const OrdersAPI = "/api/orders/{number}"
 
 var ErrNoOrder = errors.New("order is not processed")
 var ErrServiceBisy = errors.New("accrual is bisy")
+
+var NumberRegExp = regexp.MustCompile(`(\d+)`)
 
 type ServiceBisyError struct {
 	CoolDown time.Duration
@@ -38,6 +40,7 @@ func NewServiceBisyError(cooldown time.Duration, rpm int, err error) error {
 
 type AccrualClient struct {
 	client *resty.Client
+	logger *zap.SugaredLogger
 }
 
 type Accrual interface {
@@ -50,9 +53,7 @@ type AccrualOrderInfoShema struct {
 	Accrual float64       `json:"accrual,omitempty"`
 }
 
-// retryable (hashicorp) 5xx
-
-func NewAccrualClient(accrualAddr string) (Accrual, error) {
+func NewAccrualClient(accrualAddr string, logger *zap.SugaredLogger) (Accrual, error) {
 	return &AccrualClient{
 		client: resty.New().SetBaseURL(accrualAddr),
 	}, nil
@@ -73,19 +74,18 @@ func (a *AccrualClient) GetOrderInfo(num string) (*AccrualOrderInfoShema, error)
 	case http.StatusTooManyRequests:
 		cooldown, err := strconv.Atoi(result.Header().Get("Retry-After"))
 		if err != nil {
-			log.Printf("error converting header Retry-After: %v", err)
+			a.logger.Errorf("error converting header Retry-After: %v", err)
 			return nil, err
 		}
 
-		r := regexp.MustCompile(`(\d+)`)
-		rpm := r.Find(result.Body())
+		rpm := NumberRegExp.Find(result.Body())
 		if rpm == nil {
-			log.Printf("not found MaxRPM in body: %v", err)
+			a.logger.Errorf("not found MaxRPM in body: %v", err)
 			return nil, err
 		}
 		preparedRPM, err := strconv.Atoi(string(rpm))
 		if err != nil {
-			log.Printf("cant convert MaxRPM to int: %v", err)
+			a.logger.Errorf("cant convert MaxRPM to int: %v", err)
 			return nil, err
 		}
 

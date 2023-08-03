@@ -9,14 +9,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func Logger() (gin.HandlerFunc, error) {
-	logger, err := zap.NewDevelopment()
-	if err != nil {
-		return nil, err
-	}
-	defer logger.Sync()
-	sugar := logger.Sugar()
-
+func Logger(logger *zap.SugaredLogger) (gin.HandlerFunc, error) {
 	return func(c *gin.Context) {
 		uri := c.Request.RequestURI
 		method := c.Request.Method
@@ -30,13 +23,13 @@ func Logger() (gin.HandlerFunc, error) {
 		c.Next()
 		duration := time.Since(t)
 
-		sugar.Infoln(
+		logger.Infoln(
 			"URI", uri,
 			"Method", method,
 			"Duration", duration,
 			"Status", c.Writer.Status(),
 			"Size", c.Writer.Size(),
 		)
-		sugar.Debugln("Data", string(body))
+		logger.Debugln("Data", string(body))
 	}, nil
 }

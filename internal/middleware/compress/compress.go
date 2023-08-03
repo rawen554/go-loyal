@@ -3,12 +3,12 @@ package compress
 import (
 	"compress/gzip"
 	"io"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 )
 
 type compressWriter struct {
@@ -24,17 +24,23 @@ func newCompressWriter(w gin.ResponseWriter) *compressWriter {
 }
 
 func (c *compressWriter) Write(p []byte) (int, error) {
-	n, err := c.zw.Write(p)
-	if err != nil {
-		return 0, err
-	}
-	c.Header().Set("Content-Length", strconv.Itoa(n))
+	if c.Status() == http.StatusOK {
+		n, err := c.zw.Write(p)
+		if err != nil {
+			return 0, err
+		}
+		c.Header().Set("Content-Length", strconv.Itoa(n))
 
-	return n, err
+		return n, err
+	} else {
+		return c.ResponseWriter.Write(p)
+	}
 }
 
 func (c *compressWriter) WriteHeader(statusCode int) {
-	c.Header().Set("Content-Encoding", "gzip")
+	if c.Status() == http.StatusOK {
+		c.Header().Set("Content-Encoding", "gzip")
+	}
 	c.ResponseWriter.WriteHeader(statusCode)
 }
 
@@ -70,7 +76,7 @@ func (c *compressReader) Close() error {
 	return c.zr.Close()
 }
 
-func Compress() gin.HandlerFunc {
+func Compress(logger *zap.SugaredLogger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ow := c.Writer
 
@@ -91,7 +97,7 @@ func Compress() gin.HandlerFunc {
 			// оборачиваем тело запроса в io.Reader с поддержкой декомпрессии
 			cr, err := newCompressReader(c.Request.Body)
 			if err != nil {
-				log.Printf("Error compressing: %v", err)
+				logger.Errorf("Error compressing: %v", err)
 				c.Writer.WriteHeader(http.StatusInternalServerError)
 				return
 			}
@@ -103,6 +109,5 @@ func Compress() gin.HandlerFunc {
 		// передаём управление хендлеру
 		c.Writer = ow
 		c.Next()
-
 	}
 }

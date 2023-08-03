@@ -6,11 +6,17 @@ import (
 	"strings"
 )
 
+const (
+	modOf             = 10
+	double            = 2
+	overheadCondition = 9
+)
+
 func IsValidLuhn(number string) bool {
 	digits := strings.Split(strings.ReplaceAll(number, " ", ""), "")
 	lengthOfString := len(digits)
 
-	if lengthOfString < 2 {
+	if lengthOfString < double {
 		return false
 	}
 
@@ -21,10 +27,10 @@ func IsValidLuhn(number string) bool {
 		digit, _ := strconv.Atoi(digits[i])
 
 		if flag {
-			digit *= 2
+			digit *= double
 
-			if digit > 9 {
-				digit -= 9
+			if digit > overheadCondition {
+				digit -= overheadCondition
 			}
 		}
 
@@ -32,6 +38,5 @@ func IsValidLuhn(number string) bool {
 		flag = !flag
 	}
 
-	return math.Mod(float64(sum), 10) == 0
-
+	return math.Mod(float64(sum), modOf) == 0
 }

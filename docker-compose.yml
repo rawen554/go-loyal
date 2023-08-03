@@ -27,8 +27,6 @@ services:
         target: /var/lib/postgresql/data
     environment:
       - POSTGRES_PASSWORD=P@ssw0rd
-    ports:
-      - "5432:5432"
     networks:
       - gophermart
 

@@ -2,15 +2,12 @@
 all: ;
 
 .PHONY: run
-run:
-	./cmd/gophermart/gophermart
+run: build
+	./cmd/gophermart/gophermart -r :8081
 
 .PHONY: build
 build:
 	go build -o ./cmd/gophermart/gophermart ./cmd/gophermart
-
-.PHONY: clean-run
-clean-run: build run
 
 .PHONY: restart-pg
 restart-pg: stop-pg clean-data pg

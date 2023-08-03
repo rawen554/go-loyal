@@ -15,9 +15,8 @@ import (
 	"github.com/rawen554/go-loyal/internal/adapters/store"
 	"github.com/rawen554/go-loyal/internal/app"
 	"github.com/rawen554/go-loyal/internal/config"
-	"github.com/rawen554/go-loyal/internal/models"
+	"github.com/rawen554/go-loyal/internal/logger"
 	"github.com/rawen554/go-loyal/internal/processing"
-	"gorm.io/gorm/logger"
 )
 
 const (
@@ -29,14 +28,19 @@ func main() {
 	ctx, cancelCtx := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancelCtx()
 
-	config, err := config.ParseFlags()
+	logger, err := logger.NewLogger()
 	if err != nil {
 		log.Panic(err)
 	}
 
-	storage, err := store.NewPostgresStore(ctx, config.DatabaseURI, logger.LogLevel(config.LogLevel))
+	config, err := config.ParseFlags()
 	if err != nil {
-		log.Panic(err)
+		logger.Panic(err)
+	}
+
+	storage, err := store.NewStore(ctx, config.DatabaseURI, config.LogLevel)
+	if err != nil {
+		logger.Panic(err)
 	}
 
 	wg := &sync.WaitGroup{}
@@ -46,7 +50,7 @@ func main() {
 
 	wg.Add(1)
 	go func() {
-		defer log.Print("closed DB")
+		defer logger.Info("closed DB")
 		defer wg.Done()
 		<-ctx.Done()
 
@@ -55,12 +59,10 @@ func main() {
 
 	componentsErrs := make(chan error, 1)
 
-	app := app.NewApp(config, storage)
-	r := app.SetupRouter()
-
-	srv := http.Server{
-		Addr:    config.RunAddr,
-		Handler: r,
+	app := app.NewApp(config, storage, logger)
+	srv, err := app.NewServer()
+	if err != nil {
+		logger.Panicf("error creating server: %w", err)
 	}
 
 	go func(errs chan<- error) {
@@ -72,35 +74,34 @@ func main() {
 		}
 	}(componentsErrs)
 
-	accrual, err := accrual.NewAccrualClient(config.AccrualAddr)
+	accrual, err := accrual.NewAccrualClient(config.AccrualAddr, logger)
 	if err != nil {
-		log.Panic(err)
+		logger.Panic(err)
 	}
 
-	ordersChan := make(chan *models.Order, 10)
-	processingInstance := processing.NewProcessingController(ordersChan, storage, accrual)
+	processingInstance := processing.NewProcessingController(storage, accrual)
 
-	go func(ctx context.Context, errs chan<- error) {
+	go func(ctx context.Context) {
 		processingInstance.Process(ctx)
-	}(ctx, componentsErrs)
+	}(ctx)
 
 	wg.Add(1)
 	go func() {
-		defer log.Print("server has been shutdown")
+		defer logger.Info("server has been shutdown")
 		defer wg.Done()
 		<-ctx.Done()
 
 		shutdownTimeoutCtx, cancelShutdownTimeoutCtx := context.WithTimeout(context.Background(), timeoutServerShutdown)
 		defer cancelShutdownTimeoutCtx()
 		if err := srv.Shutdown(shutdownTimeoutCtx); err != nil {
-			log.Printf("an error occurred during server shutdown: %v", err)
+			logger.Errorf("an error occurred during server shutdown: %v", err)
 		}
 	}()
 
 	select {
 	case <-ctx.Done():
 	case err := <-componentsErrs:
-		log.Print(err)
+		logger.Error(err)
 		cancelCtx()
 	}
 
@@ -109,6 +110,6 @@ func main() {
 		defer cancelCtx()
 
 		<-ctx.Done()
-		log.Fatal("failed to gracefully shutdown the service")
+		logger.Fatal("failed to gracefully shutdown the service")
 	}()
 }

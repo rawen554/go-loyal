@@ -1,7 +1,7 @@
 package app
 
 import (
-	"log"
+	"fmt"
 
 	"github.com/gin-gonic/gin"
 	"github.com/rawen554/go-loyal/internal/middleware/auth"
@@ -14,20 +14,20 @@ const (
 	userAPIRoute = "/api/user"
 )
 
-func (a *App) SetupRouter() *gin.Engine {
+func (a *App) SetupRouter() (*gin.Engine, error) {
 	r := gin.New()
-	ginLoggerMiddleware, err := ginLogger.Logger()
+	ginLoggerMiddleware, err := ginLogger.Logger(a.logger)
 	if err != nil {
-		log.Fatal(err)
+		return nil, fmt.Errorf("error creating middleware logger func: %w", err)
 	}
 	r.Use(ginLoggerMiddleware)
-	r.Use(compress.Compress())
+	r.Use(compress.Compress(a.logger))
 
-	r.POST("/api/user/register", a.Authz)
-	r.POST("/api/user/login", a.Authz)
+	r.POST("/api/user/register", a.Register)
+	r.POST("/api/user/login", a.Login)
 
 	protectedUserAPI := r.Group(userAPIRoute)
-	protectedUserAPI.Use(auth.AuthMiddleware(a.Config.Seed))
+	protectedUserAPI.Use(auth.AuthMiddleware(a.config.Key, a.logger))
 	{
 		protectedUserAPI.GET("withdrawals", a.GetWithdrawals)
 		ordersAPI := protectedUserAPI.Group("orders")
@@ -43,5 +43,5 @@ func (a *App) SetupRouter() *gin.Engine {
 		}
 	}
 
-	return r
+	return r, nil
 }

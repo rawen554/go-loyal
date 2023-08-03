@@ -3,10 +3,9 @@ package app
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
-	"log"
 	"net/http"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -15,29 +14,48 @@ import (
 	"github.com/rawen554/go-loyal/internal/middleware/auth"
 	"github.com/rawen554/go-loyal/internal/models"
 	"github.com/rawen554/go-loyal/internal/utils"
+	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
 )
 
 type App struct {
-	Config *config.ServerConfig
+	config *config.ServerConfig
 	store  store.Store
+	logger *zap.SugaredLogger
 }
 
-func NewApp(config *config.ServerConfig, store store.Store) *App {
+const (
+	bcryptCost   = 7
+	maxCookieAge = 3600 * 24 * 30
+)
+
+func NewApp(config *config.ServerConfig, store store.Store, logger *zap.SugaredLogger) *App {
 	return &App{
-		Config: config,
+		config: config,
 		store:  store,
+		logger: logger,
 	}
 }
 
-func (a *App) Authz(c *gin.Context) {
+func (a *App) NewServer() (*http.Server, error) {
+	r, err := a.SetupRouter()
+	if err != nil {
+		return nil, fmt.Errorf("error init router: %w", err)
+	}
+
+	return &http.Server{
+		Addr:    a.config.RunAddr,
+		Handler: r,
+	}, nil
+}
+
+func (a *App) Login(c *gin.Context) {
 	req := c.Request
 	res := c.Writer
-	isRegister := strings.Contains(c.Request.RequestURI, "register")
 
 	userCreds := models.User{}
 	if err := json.NewDecoder(req.Body).Decode(&userCreds); err != nil {
-		log.Printf("body cannot be decoded: %v", err)
+		a.logger.Errorf("body cannot be decoded: %v", err)
 		res.WriteHeader(http.StatusBadRequest)
 		return
 	}
@@ -46,74 +64,96 @@ func (a *App) Authz(c *gin.Context) {
 		Login:    userCreds.Login,
 		Password: userCreds.Password,
 	}
-	if isRegister {
-		hash, err := bcrypt.GenerateFromPassword([]byte(userReq.Password), 7) //TODO: check sha512, cryptoready
-		if err != nil {
-			log.Printf("cannot hash pass: %v", err)
+
+	u, err := a.store.GetUser(&models.User{Login: userReq.Login})
+	if err != nil {
+		if errors.Is(err, store.ErrLoginNotFound) {
+			a.logger.Errorf("login not found: %v", err)
+			res.WriteHeader(http.StatusUnauthorized)
+			return
+		} else {
+			a.logger.Errorf("cannot get user: %v", err)
 			res.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		userReq.Password = string(hash)
-
-		if _, err = a.store.CreateUser(&userReq); err != nil {
-			if errors.Is(err, store.ErrDuplicateLogin) {
-				log.Printf("login already taken: %v", err)
-				res.WriteHeader(http.StatusConflict)
-				return
-			} else {
-				log.Printf("cannot operate user creds: %v", err)
-				res.WriteHeader(http.StatusInternalServerError)
-				return
-			}
-		}
-
-	} else {
-		u, err := a.store.GetUser(&models.User{Login: userReq.Login})
-		if err != nil {
-			if errors.Is(err, store.ErrLoginNotFound) {
-				log.Printf("login not found: %v", err)
-				res.WriteHeader(http.StatusUnauthorized)
-				return
-			} else {
-				log.Printf("cannot operate user creds: %v", err)
-				res.WriteHeader(http.StatusInternalServerError)
-				return
-			}
-		}
-
-		if err := bcrypt.CompareHashAndPassword([]byte(u.Password), []byte(userReq.Password)); err != nil {
-			res.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		userReq.ID = u.ID
 	}
 
-	jwt, err := auth.BuildJWTString(userReq.ID, a.Config.Seed)
+	if err := bcrypt.CompareHashAndPassword([]byte(u.Password), []byte(userReq.Password)); err != nil {
+		res.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	userReq.ID = u.ID
+
+	jwt, err := auth.BuildJWTString(userReq.ID, a.config.Key)
 	if err != nil {
-		log.Printf("cannot build jwt string: %v", err)
+		a.logger.Errorf("cannot build jwt string: %v", err)
 		res.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	c.SetCookie(auth.CookieName, jwt, 3600*24*30, "", "", false, true)
+	c.SetCookie(auth.CookieName, jwt, maxCookieAge, "", "", false, true)
+	res.WriteHeader(http.StatusOK)
+}
+
+func (a *App) Register(c *gin.Context) {
+	req := c.Request
+	res := c.Writer
+
+	userCreds := models.User{}
+	if err := json.NewDecoder(req.Body).Decode(&userCreds); err != nil {
+		a.logger.Errorf("body cannot be decoded: %v", err)
+		res.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	userReq := models.User{
+		Login:    userCreds.Login,
+		Password: userCreds.Password,
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(userReq.Password), bcryptCost) //TODO: check sha512, cryptoready
+	if err != nil {
+		a.logger.Errorf("cannot hash pass: %v", err)
+		res.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	userReq.Password = string(hash)
+
+	if _, err = a.store.CreateUser(&userReq); err != nil {
+		if errors.Is(err, store.ErrDuplicateLogin) {
+			a.logger.Errorf("login already taken: %v", err)
+			res.WriteHeader(http.StatusConflict)
+			return
+		} else {
+			a.logger.Errorf("cannot operate user creds: %v", err)
+			res.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+	}
+
+	jwt, err := auth.BuildJWTString(userReq.ID, a.config.Key)
+	if err != nil {
+		a.logger.Errorf("cannot build jwt string: %v", err)
+		res.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	c.SetCookie(auth.CookieName, jwt, maxCookieAge, "", "", false, true)
 	res.WriteHeader(http.StatusOK)
 }
 
 func (a *App) PutOrder(c *gin.Context) {
-	userID := c.GetUint64(auth.UserIDKey)
+	userID := c.GetUint64(auth.UserIDKey.ToString())
 	req := c.Request
 	res := c.Writer
+	if userID == 0 {
+		res.WriteHeader(http.StatusUnauthorized)
+		return
+	}
 
 	body, err := io.ReadAll(req.Body)
 	if err != nil {
 		res.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	defer func() {
-		if err := req.Body.Close(); err != nil {
-			res.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-	}()
 	number := string(body)
 
 	if isValidLuhn := utils.IsValidLuhn(number); !isValidLuhn {
@@ -122,14 +162,17 @@ func (a *App) PutOrder(c *gin.Context) {
 	}
 
 	if err := a.store.PutOrder(number, userID); err != nil {
-		if errors.Is(err, models.ErrOrderHasBeenProcessedByAnotherUser) {
+		switch {
+		case errors.Is(err, models.ErrOrderHasBeenProcessedByAnotherUser):
 			res.WriteHeader(http.StatusConflict)
 			return
-		} else if errors.Is(err, models.ErrOrderHasBeenProcessedByUser) {
+
+		case errors.Is(err, models.ErrOrderHasBeenProcessedByUser):
 			res.WriteHeader(http.StatusOK)
 			return
-		} else {
-			log.Printf("unhandled error: %v", err)
+
+		default:
+			a.logger.Errorf("unhandled error: %v", err)
 			res.WriteHeader(http.StatusInternalServerError)
 			return
 		}
@@ -141,62 +184,62 @@ func (a *App) PutOrder(c *gin.Context) {
 }
 
 func (a *App) GetOrders(c *gin.Context) {
-	userID := c.GetUint64(auth.UserIDKey)
+	userID := c.GetUint64(auth.UserIDKey.ToString())
 	res := c.Writer
+	if userID == 0 {
+		res.WriteHeader(http.StatusUnauthorized)
+		return
+	}
 
 	orders, err := a.store.GetUserOrders(userID)
 	if err != nil {
 		if errors.Is(err, models.ErrUserHasNoItems) {
 			res.WriteHeader(http.StatusNoContent)
 			return
-		} else {
-			log.Printf("error getting user orders: %v", err)
-			res.WriteHeader(http.StatusInternalServerError)
-			return
 		}
-	}
 
-	res.WriteHeader(http.StatusOK)
-	res.Header().Add("Content-Type", "application/json")
-	if err := json.NewEncoder(res).Encode(orders); err != nil {
-		log.Printf("Error writing response in JSON: %v", err)
+		a.logger.Errorf("error getting user orders: %v", err)
 		res.WriteHeader(http.StatusInternalServerError)
 		return
 	}
+
+	c.JSON(http.StatusOK, orders)
 }
 
 func (a *App) GetWithdrawals(c *gin.Context) {
-	userID := c.GetUint64(auth.UserIDKey)
+	userID := c.GetUint64(auth.UserIDKey.ToString())
 	res := c.Writer
+	if userID == 0 {
+		res.WriteHeader(http.StatusUnauthorized)
+		return
+	}
 
 	withdrawals, err := a.store.GetWithdrawals(userID)
 	if err != nil {
 		if errors.Is(err, models.ErrUserHasNoItems) {
 			res.WriteHeader(http.StatusNoContent)
 			return
-		} else {
-			log.Printf("unknown error: %v", err)
-			res.WriteHeader(http.StatusInternalServerError)
-			return
 		}
-	}
 
-	res.WriteHeader(http.StatusOK)
-	res.Header().Add("Content-Type", "application/json")
-	if err := json.NewEncoder(res).Encode(withdrawals); err != nil {
-		log.Printf("Error writing response in JSON: %v", err)
+		a.logger.Errorf("unknown error: %v", err)
 		res.WriteHeader(http.StatusInternalServerError)
 		return
 	}
+
+	c.JSON(http.StatusOK, withdrawals)
 }
 
 func (a *App) GetBalance(c *gin.Context) {
-	userID := c.GetUint64(auth.UserIDKey)
+	userID := c.GetUint64(auth.UserIDKey.ToString())
 	res := c.Writer
+	if userID == 0 {
+		res.WriteHeader(http.StatusUnauthorized)
+		return
+	}
 
 	balance, err := a.store.GetUserBalance(userID)
 	if err != nil {
-		log.Printf("Error getting user balance: %v", err)
+		a.logger.Errorf("Error getting user balance: %v", err)
 		res.WriteHeader(http.StatusInternalServerError)
 		return
 	}
@@ -204,33 +247,25 @@ func (a *App) GetBalance(c *gin.Context) {
 	res.WriteHeader(http.StatusOK)
 	res.Header().Add("Content-Type", "application/json")
 	if err := json.NewEncoder(res).Encode(balance); err != nil {
-		log.Printf("Error writing response in JSON: %v", err)
+		a.logger.Errorf("Error writing response in JSON: %v", err)
 		res.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 }
 
 func (a *App) BalanceWithdraw(c *gin.Context) {
-	userID := c.GetUint64(auth.UserIDKey)
+	userID := c.GetUint64(auth.UserIDKey.ToString())
 	res := c.Writer
 	req := c.Request
+	if userID == 0 {
+		res.WriteHeader(http.StatusUnauthorized)
+		return
+	}
 
 	var withdrawRequest models.BalanceWithdrawShema
 	if err := json.NewDecoder(req.Body).Decode(&withdrawRequest); err != nil {
-		log.Printf("Body cannot be decoded: %v", err)
+		a.logger.Errorf("Body cannot be decoded: %v", err)
 		res.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-
-	u, err := a.store.GetUser(&models.User{ID: userID})
-	if err != nil {
-		log.Printf("error getting user by ID: %v", err)
-		res.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-
-	if u.Balance < float64(withdrawRequest.Sum) {
-		res.WriteHeader(http.StatusPaymentRequired)
 		return
 	}
 
@@ -240,7 +275,11 @@ func (a *App) BalanceWithdraw(c *gin.Context) {
 	}
 
 	if err := a.store.CreateWithdraw(userID, withdrawRequest); err != nil {
-		log.Printf("cant save withdraw: %v", err)
+		if errors.Is(err, store.ErrNotEnoughAmount) {
+			res.WriteHeader(http.StatusPaymentRequired)
+			return
+		}
+		a.logger.Errorf("cant save withdraw: %v", err)
 		res.WriteHeader(http.StatusInternalServerError)
 		return
 	}
@@ -250,7 +289,7 @@ func (a *App) BalanceWithdraw(c *gin.Context) {
 
 func (a *App) Ping(c *gin.Context) {
 	if err := a.store.Ping(); err != nil {
-		log.Printf("Error opening connection to DB: %v", err)
+		a.logger.Errorf("Error opening connection to DB: %v", err)
 		c.Writer.WriteHeader(http.StatusInternalServerError)
 		return
 	}
