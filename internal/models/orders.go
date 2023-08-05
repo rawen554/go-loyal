@@ -45,12 +45,12 @@ func (ot OrderTime) MarshalJSON() ([]byte, error) {
 }
 
 type Order struct {
-	Number     string    `gorm:"primaryKey" json:"number"`
 	UploadedAt OrderTime `gorm:"default:now()" json:"uploaded_at"`
+	Number     string    `gorm:"primaryKey" json:"number"`
+	Status     Status    `sql:"type:order_status" json:"status"`
+	User       User      `json:"-"`
 	UserID     uint64    `json:"-"`
 	Accrual    float64   `json:"accrual,omitempty"`
-	User       User      `json:"-"`
-	Status     Status    `sql:"type:order_status" json:"status"`
 }
 
 func (o *Order) BeforeCreate(tx *gorm.DB) (err error) {

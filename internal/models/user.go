@@ -1,16 +1,16 @@
 package models
 
 type User struct {
-	ID        uint64  `gorm:"primaryKey" json:"id,omitempty"`
 	Login     string  `gorm:"varchar(100);index:idx_login,unique" json:"login"`
 	Password  string  `gorm:"varchar(255);not null"`
+	ID        uint64  `gorm:"primaryKey" json:"id,omitempty"`
 	Balance   float64 `gorm:"default:0" json:"-"`
 	Withdrawn float64 `gorm:"default:0" json:"-"`
 }
 
 type UserCredentialsSchema struct {
-	Login    string `json:"login" validate:"required"`
-	Password string `json:"password" validate:"required"`
+	Login    string `json:"login"`
+	Password string `json:"password"`
 }
 
 type UserBalanceShema struct {

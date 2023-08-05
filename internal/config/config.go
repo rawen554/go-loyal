@@ -31,3 +31,11 @@ func ParseFlags() (*ServerConfig, error) {
 
 	return &config, nil
 }
+
+func GetDummy() *ServerConfig {
+	return &ServerConfig{
+		RunAddr:  ":8080",
+		Key:      "b4952c3809196592c026529df00774e46bfb5be0",
+		LogLevel: "debug",
+	}
+}

@@ -3,47 +3,55 @@ package processing
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/rawen554/go-loyal/internal/adapters/accrual"
 	"github.com/rawen554/go-loyal/internal/adapters/store"
 	"github.com/rawen554/go-loyal/internal/models"
 	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
 )
 
 type ProcessingController struct {
-	ordersChan chan *models.Order
-	store      store.Store
-	accrual    accrual.Accrual
-	errg       *errgroup.Group
-	logger     *zap.SugaredLogger
+	ordersChan   chan *models.Order
+	store        store.Store
+	accrual      accrual.Accrual
+	logger       *zap.SugaredLogger
+	cooldownChan chan time.Duration
 }
 
 const chanLen = 10
 
-func NewProcessingController(store store.Store, accrual accrual.Accrual) *ProcessingController {
+func NewProcessingController(
+	store store.Store,
+	accrual accrual.Accrual,
+	logger *zap.SugaredLogger,
+) *ProcessingController {
 	ordersChan := make(chan *models.Order, chanLen)
+	cooldownChan := make(chan time.Duration, 1)
 
 	instance := &ProcessingController{
-		ordersChan: ordersChan,
-		store:      store,
-		accrual:    accrual,
-		errg:       new(errgroup.Group),
+		ordersChan:   ordersChan,
+		store:        store,
+		accrual:      accrual,
+		logger:       logger,
+		cooldownChan: cooldownChan,
 	}
 
-	go instance.ListenOrders()
+	go instance.listenOrders()
 
 	return instance
 }
 
-func (p *ProcessingController) ListenOrders() {
+func (p *ProcessingController) listenOrders() {
 	ticker := time.NewTicker(chanLen * time.Second)
 	defer ticker.Stop()
 
 	for {
-		<-ticker.C
+		select {
+		case cooldown := <-p.cooldownChan:
+			time.Sleep(cooldown)
+		case <-ticker.C:
+		}
 		orders, err := p.store.GetUnprocessedOrders()
 		if err != nil {
 			p.logger.Errorf("error getting unprocessed orders from store: %v", err)
@@ -61,45 +69,41 @@ func (p *ProcessingController) Process(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case o := <-p.ordersChan:
-				p.errg.Go(func() error {
-					if o.Status == models.NEW {
-						_, err := p.store.UpdateOrder(&models.Order{Number: o.Number, Status: models.PROCESSING})
-						if err != nil {
-							return fmt.Errorf("error updating order from accrual: %w", err)
-						}
-					}
 
-					info, err := p.accrual.GetOrderInfo(o.Number)
+				if o.Status == models.NEW {
+					_, err := p.store.UpdateOrder(&models.Order{Number: o.Number, Status: models.PROCESSING})
 					if err != nil {
-						return fmt.Errorf("error getting order: %w", err)
+						p.logger.Errorf("error updating order from accrual: %w", err)
+						continue
 					}
+				}
 
-					if info.Status == models.PROCESSED || info.Status == models.INVALID {
-						_, err := p.store.UpdateOrder(
-							&models.Order{
-								Number:  info.Order,
-								UserID:  o.UserID,
-								Accrual: info.Accrual,
-								Status:  info.Status,
-							})
-						if err != nil {
-							return fmt.Errorf("error updating order: %w", err)
-						}
+				info, err := p.accrual.GetOrderInfo(o.Number)
+				if err != nil {
+					var serviceBusyError *accrual.ServiceBusyError
+					if errors.As(err, &serviceBusyError) {
+						p.logger.Infof("service busy: %v", serviceBusyError)
+						p.cooldownChan <- serviceBusyError.CoolDown
+						time.Sleep(serviceBusyError.CoolDown)
+						continue
 					}
+					p.logger.Errorf("unhandled error: %v", err)
+					continue
+				}
 
-					return nil
-				})
+				if info.Status == models.PROCESSED || info.Status == models.INVALID {
+					_, err := p.store.UpdateOrder(
+						&models.Order{
+							Number:  info.Order,
+							UserID:  o.UserID,
+							Accrual: info.Accrual,
+							Status:  info.Status,
+						})
+					if err != nil {
+						p.logger.Errorf("error updating order: %w", err)
+					}
+				}
 			}
 		}
 	}(ctx)
-
-	if err := p.errg.Wait(); err != nil {
-		var serviceBisyError *accrual.ServiceBisyError
-		if errors.As(err, &serviceBisyError) {
-			p.logger.Infof("service bisy: %v", serviceBisyError)
-			time.Sleep(serviceBisyError.CoolDown)
-		} else {
-			p.logger.Errorf("unhandled error: %v", err)
-		}
-	}
 }

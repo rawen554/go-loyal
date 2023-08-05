@@ -55,7 +55,7 @@ func (a *App) Login(c *gin.Context) {
 
 	userCreds := models.User{}
 	if err := json.NewDecoder(req.Body).Decode(&userCreds); err != nil {
-		a.logger.Errorf("body cannot be decoded: %v", err)
+		a.logger.Errorf("user credentials cannot be decoded: %v", err)
 		res.WriteHeader(http.StatusBadRequest)
 		return
 	}
@@ -86,7 +86,7 @@ func (a *App) Login(c *gin.Context) {
 
 	jwt, err := auth.BuildJWTString(userReq.ID, a.config.Key)
 	if err != nil {
-		a.logger.Errorf("cannot build jwt string: %v", err)
+		a.logger.Errorf("cannot build jwt string for authorized user: %v", err)
 		res.WriteHeader(http.StatusInternalServerError)
 		return
 	}
@@ -178,11 +178,10 @@ func (a *App) PutOrder(c *gin.Context) {
 		}
 	}
 
-	// TODO: errgroup - сбор ошибок с воркеров
-
 	res.WriteHeader(http.StatusAccepted)
 }
 
+//nolint:dupl // code deduplication will lead to bad code extending in future
 func (a *App) GetOrders(c *gin.Context) {
 	userID := c.GetUint64(auth.UserIDKey.ToString())
 	res := c.Writer
@@ -206,6 +205,7 @@ func (a *App) GetOrders(c *gin.Context) {
 	c.JSON(http.StatusOK, orders)
 }
 
+//nolint:dupl // code deduplication will lead to bad code extending in future
 func (a *App) GetWithdrawals(c *gin.Context) {
 	userID := c.GetUint64(auth.UserIDKey.ToString())
 	res := c.Writer

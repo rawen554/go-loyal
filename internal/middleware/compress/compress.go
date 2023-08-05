@@ -2,6 +2,7 @@ package compress
 
 import (
 	"compress/gzip"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -9,6 +10,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+)
+
+const (
+	contentEncoding     = "Content-Encoding"
+	contentEncodingGzip = "gzip"
 )
 
 type compressWriter struct {
@@ -27,30 +33,36 @@ func (c *compressWriter) Write(p []byte) (int, error) {
 	if c.Status() == http.StatusOK {
 		n, err := c.zw.Write(p)
 		if err != nil {
-			return 0, err
+			return 0, fmt.Errorf("error writing gzipped bytes: %w", err)
 		}
 		c.Header().Set("Content-Length", strconv.Itoa(n))
 
-		return n, err
+		return n, nil
 	} else {
-		return c.ResponseWriter.Write(p)
+		n, err := c.ResponseWriter.Write(p)
+		if err != nil {
+			return 0, fmt.Errorf("error writing bytes: %w", err)
+		}
+
+		return n, nil
 	}
 }
 
 func (c *compressWriter) WriteHeader(statusCode int) {
 	if c.Status() == http.StatusOK {
-		c.Header().Set("Content-Encoding", "gzip")
+		c.Header().Set(contentEncoding, contentEncodingGzip)
 	}
 	c.ResponseWriter.WriteHeader(statusCode)
 }
 
 // Close закрывает gzip.Writer и досылает все данные из буфера.
 func (c *compressWriter) Close() error {
-	return c.zw.Close()
+	if err := c.zw.Close(); err != nil {
+		return fmt.Errorf("error closing writer: %w", err)
+	}
+	return nil
 }
 
-// compressReader реализует интерфейс io.ReadCloser и позволяет прозрачно для сервера
-// декомпрессировать получаемые от клиента данные
 type compressReader struct {
 	io.ReadCloser
 	zr *gzip.Reader
@@ -59,7 +71,7 @@ type compressReader struct {
 func newCompressReader(r io.ReadCloser) (*compressReader, error) {
 	zr, err := gzip.NewReader(r)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error crating gzip reader: %w", err)
 	}
 
 	return &compressReader{
@@ -68,12 +80,19 @@ func newCompressReader(r io.ReadCloser) (*compressReader, error) {
 	}, nil
 }
 
-func (c compressReader) Read(p []byte) (n int, err error) {
-	return c.zr.Read(p)
+func (c compressReader) Read(p []byte) (int, error) {
+	n, err := c.zr.Read(p)
+	if err != nil {
+		return 0, fmt.Errorf("error reading gzipped: %w", err)
+	}
+	return n, nil
 }
 
 func (c *compressReader) Close() error {
-	return c.zr.Close()
+	if err := c.zr.Close(); err != nil {
+		return fmt.Errorf("error closing reader: %w", err)
+	}
+	return nil
 }
 
 func Compress(logger *zap.SugaredLogger) gin.HandlerFunc {
@@ -81,18 +100,23 @@ func Compress(logger *zap.SugaredLogger) gin.HandlerFunc {
 		ow := c.Writer
 
 		acceptEncoding := c.Request.Header.Get("Accept-Encoding")
-		supportsGzip := strings.Contains(acceptEncoding, "gzip")
+		supportsGzip := strings.Contains(acceptEncoding, contentEncodingGzip)
 		if supportsGzip {
 			// оборачиваем оригинальный http.ResponseWriter новым с поддержкой сжатия
 			cw := newCompressWriter(c.Writer)
 			// меняем оригинальный http.ResponseWriter на новый
 			ow = cw
 			// не забываем отправить клиенту все сжатые данные после завершения middleware
-			defer cw.Close()
+			defer func() {
+				if err := cw.Close(); err != nil {
+					logger.Errorf("error closing compress writer: %w", err)
+					return
+				}
+			}()
 		}
 
-		contentEncoding := c.Request.Header.Get("Content-Encoding")
-		sendsGzip := strings.Contains(contentEncoding, "gzip")
+		contentEncoding := c.Request.Header.Get(contentEncoding)
+		sendsGzip := strings.Contains(contentEncoding, contentEncodingGzip)
 		if sendsGzip {
 			// оборачиваем тело запроса в io.Reader с поддержкой декомпрессии
 			cr, err := newCompressReader(c.Request.Body)
@@ -103,7 +127,12 @@ func Compress(logger *zap.SugaredLogger) gin.HandlerFunc {
 			}
 			// меняем тело запроса на новое
 			c.Request.Body = cr
-			defer cr.Close()
+			defer func() {
+				if err := cr.Close(); err != nil {
+					logger.Errorf("error closing compress reader: %w", err)
+					return
+				}
+			}()
 		}
 
 		// передаём управление хендлеру

@@ -1,11 +1,11 @@
 package models
 
 type Withdraw struct {
-	OrderNum    string    `json:"order"`
-	UserID      uint64    `gorm:"column:user_id" json:"-"`
-	User        User      `json:"-"`
-	Sum         float64   `json:"sum"`
 	ProcessedAt OrderTime `gorm:"default:now()" json:"processed_at"`
+	OrderNum    string    `json:"order"`
+	User        User      `json:"-"`
+	UserID      uint64    `gorm:"column:user_id" json:"-"`
+	Sum         float64   `json:"sum"`
 }
 
 func (w *Withdraw) TableName() string {

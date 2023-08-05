@@ -39,6 +39,11 @@ type Store interface {
 	Close()
 }
 
+const (
+	MaxIdleConns = 10
+	MaxOpenConns = 100
+)
+
 var ErrDBInsertConflict = errors.New("conflict insert into table, returned stored value")
 var ErrURLDeleted = errors.New("url is deleted")
 var ErrLoginNotFound = errors.New("login not found")
@@ -98,8 +103,8 @@ func prepareConnPool(conn *gorm.DB) error {
 		return fmt.Errorf("cannot get interface sql.DB: %w", err)
 	}
 
-	sqlDB.SetMaxIdleConns(10)
-	sqlDB.SetMaxOpenConns(100)
+	sqlDB.SetMaxIdleConns(MaxIdleConns)
+	sqlDB.SetMaxOpenConns(MaxOpenConns)
 	sqlDB.SetConnMaxLifetime(time.Hour)
 
 	return nil

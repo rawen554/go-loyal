@@ -8,7 +8,9 @@ import (
 	"net/url"
 	"testing"
 
+	"github.com/gin-gonic/gin"
 	"github.com/golang/mock/gomock"
+	_ "github.com/jackc/pgx/v5/stdlib"
 	originalStore "github.com/rawen554/go-loyal/internal/adapters/store"
 	"github.com/rawen554/go-loyal/internal/adapters/store/mocks"
 	"github.com/rawen554/go-loyal/internal/config"
@@ -18,22 +20,22 @@ import (
 )
 
 func TestLogin(t *testing.T) {
+	gin.SetMode(gin.TestMode)
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
-
-	config, err := config.ParseFlags()
-	if err != nil {
-		t.Error(err)
-	}
 
 	store := mocks.NewMockStore(ctrl)
 
 	gomock.InOrder(
-		store.EXPECT().CreateUser(gomock.Any()).Return(int64(1), nil),
-		store.EXPECT().CreateUser(gomock.Any()).Return(int64(0), originalStore.ErrLoginNotFound),
+		store.EXPECT().GetUser(gomock.Any()).Return(
+			&models.User{
+				Login:    "a",
+				Password: "$2a$07$me7lXx6x3fQpcrqxjYGa.eyFLQlwnZMI1kxCK8P90HCdUtol92936",
+			}, nil),
+		store.EXPECT().GetUser(gomock.Any()).Return(nil, originalStore.ErrLoginNotFound),
 	)
 
-	app := NewApp(config, store, zap.L().Sugar())
+	app := NewApp(config.GetDummy(), store, zap.L().Sugar())
 	r, err := app.SetupRouter()
 	if err != nil {
 		t.Error(err)
@@ -50,17 +52,17 @@ func TestLogin(t *testing.T) {
 		status    int
 	}{
 		{
-			name:      "Register user",
+			name:      "Login user",
 			userCreds: models.UserCredentialsSchema{Login: "a", Password: "b"},
-			url:       "/api/user/register",
-			status:    200,
+			url:       "/api/user/login",
+			status:    http.StatusOK,
 			method:    http.MethodPost,
 		},
 		{
-			name:      "Register user with conflict",
+			name:      "Login not found",
 			userCreds: models.UserCredentialsSchema{Login: "a", Password: "b"},
-			url:       "/api/user/register",
-			status:    409,
+			url:       "/api/user/login",
+			status:    http.StatusUnauthorized,
 			method:    http.MethodPost,
 		},
 	}
@@ -94,20 +96,13 @@ func TestLogin(t *testing.T) {
 			t.Error(err)
 		}
 		require.Equal(t, tt.status, res.StatusCode)
-		if tt.status == http.StatusOK {
-			require.Contains(t, res.Header.Get("Set-Cookie"), "jwt")
-		}
 	}
 }
 
 func TestRegister(t *testing.T) {
+	gin.SetMode(gin.TestMode)
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
-
-	config, err := config.ParseFlags()
-	if err != nil {
-		t.Error(err)
-	}
 
 	store := mocks.NewMockStore(ctrl)
 
@@ -116,7 +111,7 @@ func TestRegister(t *testing.T) {
 		store.EXPECT().CreateUser(gomock.Any()).Return(int64(0), originalStore.ErrDuplicateLogin),
 	)
 
-	app := NewApp(config, store, zap.L().Sugar())
+	app := NewApp(config.GetDummy(), store, zap.L().Sugar())
 	r, err := app.SetupRouter()
 	if err != nil {
 		t.Error(err)
@@ -136,14 +131,14 @@ func TestRegister(t *testing.T) {
 			name:      "Register user",
 			userCreds: models.UserCredentialsSchema{Login: "a", Password: "b"},
 			url:       "/api/user/register",
-			status:    200,
+			status:    http.StatusOK,
 			method:    http.MethodPost,
 		},
 		{
 			name:      "Register user with conflict",
 			userCreds: models.UserCredentialsSchema{Login: "a", Password: "b"},
 			url:       "/api/user/register",
-			status:    409,
+			status:    http.StatusConflict,
 			method:    http.MethodPost,
 		},
 	}

@@ -22,6 +22,7 @@ import (
 const (
 	timeoutServerShutdown = time.Second * 5
 	timeoutShutdown       = time.Second * 10
+	component             = "component"
 )
 
 func main() {
@@ -35,12 +36,12 @@ func main() {
 
 	config, err := config.ParseFlags()
 	if err != nil {
-		logger.Panic(err)
+		logger.Fatal(err)
 	}
 
 	storage, err := store.NewStore(ctx, config.DatabaseURI, config.LogLevel)
 	if err != nil {
-		logger.Panic(err)
+		logger.Fatal(err)
 	}
 
 	wg := &sync.WaitGroup{}
@@ -59,10 +60,10 @@ func main() {
 
 	componentsErrs := make(chan error, 1)
 
-	app := app.NewApp(config, storage, logger)
+	app := app.NewApp(config, storage, logger.With(component, "app"))
 	srv, err := app.NewServer()
 	if err != nil {
-		logger.Panicf("error creating server: %w", err)
+		logger.Fatalf("error creating server: %w", err)
 	}
 
 	go func(errs chan<- error) {
@@ -74,12 +75,16 @@ func main() {
 		}
 	}(componentsErrs)
 
-	accrual, err := accrual.NewAccrualClient(config.AccrualAddr, logger)
+	accrual, err := accrual.NewAccrualClient(config.AccrualAddr, logger.With(component, "accrual-client"))
 	if err != nil {
-		logger.Panic(err)
+		logger.Fatal(err)
 	}
 
-	processingInstance := processing.NewProcessingController(storage, accrual)
+	processingInstance := processing.NewProcessingController(
+		storage,
+		accrual,
+		logger.With(component, "processing-controller"),
+	)
 
 	go func(ctx context.Context) {
 		processingInstance.Process(ctx)
