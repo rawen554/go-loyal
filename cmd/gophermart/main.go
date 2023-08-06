@@ -26,22 +26,28 @@ const (
 )
 
 func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run() error {
 	ctx, cancelCtx := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancelCtx()
 
 	logger, err := logger.NewLogger()
 	if err != nil {
-		log.Panic(err)
+		return fmt.Errorf("failed to initialize logger: %w", err)
 	}
 
 	config, err := config.ParseFlags()
 	if err != nil {
-		logger.Fatal(err)
+		return fmt.Errorf("failed to parse config: %w", err)
 	}
 
 	storage, err := store.NewStore(ctx, config.DatabaseURI, config.LogLevel)
 	if err != nil {
-		logger.Fatal(err)
+		return fmt.Errorf("failed to initialize storage: %w", err)
 	}
 
 	wg := &sync.WaitGroup{}
@@ -77,7 +83,7 @@ func main() {
 
 	accrual, err := accrual.NewAccrualClient(config.AccrualAddr, logger.With(component, "accrual-client"))
 	if err != nil {
-		logger.Fatal(err)
+		return fmt.Errorf("failed to create accrual client: %w", err)
 	}
 
 	processingInstance := processing.NewProcessingController(
@@ -117,4 +123,6 @@ func main() {
 		<-ctx.Done()
 		logger.Fatal("failed to gracefully shutdown the service")
 	}()
+
+	return nil
 }

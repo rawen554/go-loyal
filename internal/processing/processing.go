@@ -50,6 +50,7 @@ func (p *ProcessingController) listenOrders() {
 		select {
 		case cooldown := <-p.cooldownChan:
 			time.Sleep(cooldown)
+			continue
 		case <-ticker.C:
 		}
 		orders, err := p.store.GetUnprocessedOrders()
