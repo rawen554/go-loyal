@@ -4,6 +4,7 @@
 *.dll
 *.so
 *.dylib
+**/__debug_bin*
 
 # Test binary, built with `go test -c`
 *.test
@@ -21,3 +22,16 @@ vendor/
 # IDEs directories
 .idea
 .vscode
+
+# Platform specific
+*/**/.DS_Store
+
+# Mounting volumes
+db/data
+
+# Other
+short-url-db.json
+golangci-lint
+
+# Configs
+.env

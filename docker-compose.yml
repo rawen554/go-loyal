@@ -1,0 +1,34 @@
+services:
+  gophermart:
+    build:
+      dockerfile: Dockerfile
+      context: .
+    image: gophermart
+    environment:
+      - DATABASE_URI=postgres://gophermart:P@ssw0rd@gophermart-db:5432/gophermart?sslmode=disable
+    expose:
+      - 8080
+    ports:
+      - "8080:8080"
+    networks:
+      - gophermart
+    depends_on:
+      - gophermart-db
+    stop_grace_period: 5s
+
+  gophermart-db:
+    image: postgres:15.3
+    volumes:
+      - type: bind
+        source: db/init/
+        target: /docker-entrypoint-initdb.d
+      - type: bind
+        source: db/data/
+        target: /var/lib/postgresql/data
+    environment:
+      - POSTGRES_PASSWORD=P@ssw0rd
+    networks:
+      - gophermart
+
+networks:
+  gophermart:
